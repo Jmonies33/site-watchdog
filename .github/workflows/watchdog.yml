@@ -1,0 +1,75 @@
+name: Site watchdog
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: watchdog
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check every site (3 tries each)
+        id: check
+        run: |
+          fail=""
+          while read -r url; do
+            [ -z "$url" ] && continue
+            ok=0; code=none
+            for try in 1 2 3; do
+              code=$(curl -sL -o /dev/null -m 20 -w '%{http_code}' "$url" || true)
+              if [ "$code" = "200" ]; then ok=1; break; fi
+              sleep 20
+            done
+            echo "$url -> $code"
+            [ "$ok" = 1 ] || fail="$fail $url (code $code)"
+          done < sites.txt
+          echo "fail=$fail" >> "$GITHUB_OUTPUT"
+      - name: Last run's result
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh run list -R "$GITHUB_REPOSITORY" --workflow watchdog.yml --status completed -L 1 --json conclusion -q '.[0].conclusion' || true)
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+      - name: Text once when it breaks, once when it is back
+        env:
+          SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          FROM: ${{ secrets.ALERT_FROM }}
+          TO: ${{ secrets.ALERT_TO }}
+          FAIL: ${{ steps.check.outputs.fail }}
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: |
+          if [ -z "$SID" ] || [ -z "$TOKEN" ] || [ -z "$FROM" ] || [ -z "$TO" ]; then echo "Twilio secrets not set: email only."; exit 0; fi
+          msg=""
+          if [ -n "$FAIL" ] && [ "$PREV" != "failure" ]; then msg="Site Down
+
+          $FAIL
+
+          Checked 3 times from GitHub. You get one more text when it is back."; fi
+          if [ -z "$FAIL" ] && [ "$PREV" = "failure" ]; then msg="Site Back Up
+
+          Every site is answering again."; fi
+          if [ -n "$msg" ]; then
+            curl -s -o /dev/null -w 'twilio %{http_code}\n' -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Messages.json" -u "$SID:$TOKEN" --data-urlencode "To=$TO" --data-urlencode "From=$FROM" --data-urlencode "Body=$msg"
+          fi
+      - name: Weekly heartbeat (GitHub pauses schedules in a repo with no activity for 60 days)
+        run: |
+          if [ "$(date -u +%u)" = "1" ] && [ "$(date -u +%H)" = "12" ] && [ "$(date -u +%M)" -lt 30 ]; then
+            date -u > heartbeat.txt
+            git config user.name "watchdog"; git config user.email "watchdog@users.noreply.github.com"
+            git add heartbeat.txt && git commit -q -m "heartbeat" && git push -q || true
+          fi
+      - name: Fail the run if a site is down
+        env:
+          FAIL: ${{ steps.check.outputs.fail }}
+        run: |
+          if [ -n "$FAIL" ]; then echo "DOWN:$FAIL"; exit 1; fi
+          echo "All sites up."
