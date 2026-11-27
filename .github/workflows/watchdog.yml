@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '*/30 * * * *'
   workflow_dispatch:
+    inputs:
+      test_text:
+        description: 'Send a test text even if every site is up'
+        type: boolean
+        default: false
 permissions:
   contents: write
   actions: read
@@ -41,13 +46,15 @@ jobs:
       - name: Text once when it breaks, once when it is back
         env:
           SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-          TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          KEY: ${{ secrets.TWILIO_API_KEY_SID }}
+          TOKEN: ${{ secrets.TWILIO_API_KEY_SECRET }}
+          TEST: ${{ inputs.test_text }}
           FROM: ${{ secrets.ALERT_FROM }}
           TO: ${{ secrets.ALERT_TO }}
           FAIL: ${{ steps.check.outputs.fail }}
           PREV: ${{ steps.prev.outputs.prev }}
         run: |
-          if [ -z "$SID" ] || [ -z "$TOKEN" ] || [ -z "$FROM" ] || [ -z "$TO" ]; then echo "Twilio secrets not set: email only."; exit 0; fi
+          if [ -z "$SID" ] || [ -z "$KEY" ] || [ -z "$TOKEN" ] || [ -z "$FROM" ] || [ -z "$TO" ]; then echo "Twilio secrets not set: email only."; exit 0; fi
           msg=""
           if [ -n "$FAIL" ] && [ "$PREV" != "failure" ]; then msg="Site Down
 
@@ -57,8 +64,9 @@ jobs:
           if [ -z "$FAIL" ] && [ "$PREV" = "failure" ]; then msg="Site Back Up
 
           Every site is answering again."; fi
+          if [ "$TEST" = "true" ] && [ -z "$msg" ]; then msg="Site watchdog test: texts are working. You will get one text if a site goes down and one when it is back."; fi
           if [ -n "$msg" ]; then
-            curl -s -o /dev/null -w 'twilio %{http_code}\n' -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Messages.json" -u "$SID:$TOKEN" --data-urlencode "To=$TO" --data-urlencode "From=$FROM" --data-urlencode "Body=$msg"
+            curl -s -o /dev/null -w 'twilio %{http_code}\n' -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Messages.json" -u "$KEY:$TOKEN" --data-urlencode "To=$TO" --data-urlencode "From=$FROM" --data-urlencode "Body=$msg"
           fi
       - name: Weekly heartbeat (GitHub pauses schedules in a repo with no activity for 60 days)
         run: |
