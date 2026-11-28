@@ -1,0 +1,5 @@
+# Domains whose security certificate and registration are checked once a day.
+rivercityautomations.com
+thecorridorcard.com
+jandnwindowcleaning.com
+rcago.com

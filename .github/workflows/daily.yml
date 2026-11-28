@@ -1,0 +1,82 @@
+name: Daily checks
+# Once a day, 7:30 AM Central: security certificates, domain renewals, and whether
+# the Mac's midnight closeout ran (it updates heartbeat/closeout.txt in this repo).
+# Texts only when something needs Jerry; a failed run also emails him.
+on:
+  schedule:
+    - cron: '30 13 * * *'
+  workflow_dispatch:
+    inputs:
+      test_text:
+        description: 'Send the daily report as a text even if all is fine'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - name: Certificates, domains, last night's closeout
+        id: check
+        run: |
+          python3 - <<'PY' > report.txt
+          import datetime as dt, json, socket, ssl, urllib.request
+          now = dt.datetime.now(dt.timezone.utc); out = []
+          for d in [l.strip() for l in open('domains.txt') if l.strip() and not l.startswith('#')]:
+              try:
+                  c = ssl.create_default_context().wrap_socket(socket.create_connection((d, 443), 15), server_hostname=d)
+                  end = dt.datetime.strptime(c.getpeercert()['notAfter'], '%b %d %H:%M:%S %Y %Z').replace(tzinfo=dt.timezone.utc)
+                  days = (end - now).days
+                  if days <= 14: out.append('%s: security certificate expires in %d days' % (d, days))
+                  print('# %s cert %d days' % (d, days))
+              except Exception as e:
+                  out.append('%s: could not check its security certificate (%s)' % (d, str(e)[:60]))
+              try:
+                  r = json.load(urllib.request.urlopen('https://rdap.org/domain/' + d, timeout=20))
+                  ex = [e['eventDate'] for e in r.get('events', []) if e.get('eventAction') == 'expiration']
+                  if ex:
+                      days = (dt.datetime.fromisoformat(ex[0].replace('Z', '+00:00')) - now).days
+                      if days <= 14: out.append('%s: domain registration ends in %d days' % (d, days))
+                      print('# %s domain %d days' % (d, days))
+              except Exception as e:
+                  print('# %s domain lookup failed: %s' % (d, str(e)[:60]))
+          try:
+              last = dt.datetime.fromisoformat(open('heartbeat/closeout.txt').read().strip().replace('Z', '+00:00'))
+              hours = (now - last).total_seconds() / 3600
+              print('# closeout %.1f hours ago' % hours)
+              if hours > 26: out.append("The Mac's midnight save did not run last night (last one %d hours ago). Open the Mac." % hours)
+          except Exception as e:
+              out.append("Could not tell whether the Mac's midnight save ran (%s)" % str(e)[:60])
+          for line in out: print(line)
+          PY
+          cat report.txt
+          grep -v '^#' report.txt > problems.txt || true
+          { echo "problems<<EOF"; cat problems.txt; echo "EOF"; } >> "$GITHUB_OUTPUT"
+      - name: Text Jerry if anything needs him
+        env:
+          SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          KEY: ${{ secrets.TWILIO_API_KEY_SID }}
+          TOKEN: ${{ secrets.TWILIO_API_KEY_SECRET }}
+          FROM: ${{ secrets.ALERT_FROM }}
+          TO: ${{ secrets.ALERT_TO }}
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+          TEST: ${{ inputs.test_text }}
+        run: |
+          if [ -z "$SID" ] || [ -z "$KEY" ] || [ -z "$TOKEN" ]; then echo "no Twilio secrets"; exit 0; fi
+          msg=""
+          if [ -n "$(echo "$PROBLEMS" | sed '/^ *$/d')" ]; then msg="Daily Check
+
+          $PROBLEMS"; fi
+          if [ "$TEST" = "true" ] && [ -z "$msg" ]; then msg="Daily check test: certificates, domains and last night's Mac save all look fine."; fi
+          if [ -n "$msg" ]; then
+            curl -s -o /tmp/tw.json -w 'twilio %{http_code}\n' -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Messages.json" -u "$KEY:$TOKEN" --data-urlencode "To=$TO" --data-urlencode "From=$FROM" --data-urlencode "Body=$msg"
+          fi
+      - name: Fail the run if anything needs Jerry
+        env:
+          PROBLEMS: ${{ steps.check.outputs.problems }}
+        run: |
+          if [ -n "$(echo "$PROBLEMS" | sed '/^ *$/d')" ]; then echo "$PROBLEMS"; exit 1; fi
+          echo "All good."

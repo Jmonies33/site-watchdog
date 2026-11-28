@@ -1,2 +1,6 @@
-https://rivercityautomations.com
-https://thecorridorcard.com
+# One page per line:  address | text that must be on the page
+# The check fails if the page does not answer OR the text is missing (a broken deploy can still answer).
+https://rivercityautomations.com | Start Your Free Trial
+https://rivercityautomations.com/onboard | pick your plan
+https://thecorridorcard.com | Reserve a category
+https://jandnwindowcleaning.com | 608-1477

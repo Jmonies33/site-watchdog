@@ -20,22 +20,27 @@ jobs:
     timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
-      - name: Check every site (3 tries each)
+      - name: Check every page (3 tries each, must answer AND show its text)
         id: check
         run: |
           fail=""
-          while read -r url; do
-            [ -z "$url" ] && continue
-            ok=0; code=none
+          while IFS= read -r line; do
+            case "$line" in ''|'#'*) continue;; esac
+            url=$(echo "${line%%|*}" | xargs); want=$(echo "${line#*|}" | xargs)
+            [ "$url" = "$want" ] && want=""
+            ok=0; why=""
             for try in 1 2 3; do
-              code=$(curl -sL -o /dev/null -m 20 -w '%{http_code}' "$url" || true)
-              if [ "$code" = "200" ]; then ok=1; break; fi
+              code=$(curl -sL -o /tmp/page.html -m 20 -w '%{http_code}' "$url" || true)
+              if [ "$code" != "200" ]; then why="code $code"
+              elif [ -n "$want" ] && ! python3 -c "import re,html,sys;t=open('/tmp/page.html',errors='ignore').read();t=html.unescape(re.sub(r'<[^>]+>',' ',t));sys.exit(0 if sys.argv[1].lower() in re.sub(r'\\s+',' ',t).lower() else 1)" "$want"; then why="answered but \"$want\" is missing"
+              else ok=1; break; fi
               sleep 20
             done
-            echo "$url -> $code"
-            [ "$ok" = 1 ] || fail="$fail $url (code $code)"
+            echo "$url -> ${ok/1/OK}${ok/0/ $why}"
+            [ "$ok" = 1 ] || fail="$fail
+          - $url ($why)"
           done < sites.txt
-          echo "fail=$fail" >> "$GITHUB_OUTPUT"
+          { echo "fail<<EOF"; echo "$fail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
       - name: Last run's result
         id: prev
         env:
@@ -56,7 +61,8 @@ jobs:
         run: |
           if [ -z "$SID" ] || [ -z "$KEY" ] || [ -z "$TOKEN" ] || [ -z "$FROM" ] || [ -z "$TO" ]; then echo "Twilio secrets not set: email only."; exit 0; fi
           msg=""
-          if [ -n "$FAIL" ] && [ "$PREV" != "failure" ]; then msg="Site Down
+          FAIL=$(echo "$FAIL" | sed "/^ *$/d")
+          if [ -n "$FAIL" ] && [ "$PREV" != "failure" ]; then msg="Site Problem
 
           $FAIL
 
@@ -70,16 +76,9 @@ jobs:
             python3 -c "import json;d=json.load(open('/tmp/tw.json'));print('twilio says:',d.get('code'),d.get('message'),'| status:',d.get('status'))" || true
             echo "key starts with: ${KEY:0:2}  key length: ${#KEY}  secret length: ${#TOKEN}"
           fi
-      - name: Weekly heartbeat (GitHub pauses schedules in a repo with no activity for 60 days)
-        run: |
-          if [ "$(date -u +%u)" = "1" ] && [ "$(date -u +%H)" = "12" ] && [ "$(date -u +%M)" -lt 30 ]; then
-            date -u > heartbeat.txt
-            git config user.name "watchdog"; git config user.email "watchdog@users.noreply.github.com"
-            git add heartbeat.txt && git commit -q -m "heartbeat" && git push -q || true
-          fi
       - name: Fail the run if a site is down
         env:
           FAIL: ${{ steps.check.outputs.fail }}
         run: |
-          if [ -n "$FAIL" ]; then echo "DOWN:$FAIL"; exit 1; fi
+          if [ -n "$(echo "$FAIL" | sed '/^ *$/d')" ]; then echo "PROBLEM:$FAIL"; exit 1; fi
           echo "All sites up."
