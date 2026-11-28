@@ -36,7 +36,7 @@ jobs:
               else ok=1; break; fi
               sleep 20
             done
-            echo "$url -> ${ok/1/OK}${ok/0/ $why}"
+            if [ "$ok" = 1 ]; then echo "$url -> OK"; else echo "$url -> PROBLEM: $why"; fi
             [ "$ok" = 1 ] || fail="$fail
           - $url ($why)"
           done < sites.txt
