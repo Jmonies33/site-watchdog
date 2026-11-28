@@ -30,16 +30,16 @@ jobs:
                   c = ssl.create_default_context().wrap_socket(socket.create_connection((d, 443), 15), server_hostname=d)
                   end = dt.datetime.strptime(c.getpeercert()['notAfter'], '%b %d %H:%M:%S %Y %Z').replace(tzinfo=dt.timezone.utc)
                   days = (end - now).days
-                  if days <= 14: out.append('%s: security certificate expires in %d days' % (d, days))
+                  if days <= 14: out.append('Site: %s\nProblem: The security certificate expires in %d days.\nNext step: Tell Claude to check the certificate renewal.' % (d, days))
                   print('# %s cert %d days' % (d, days))
               except Exception as e:
-                  out.append('%s: could not check its security certificate (%s)' % (d, str(e)[:60]))
+                  out.append('Site: %s\nProblem: The security certificate could not be checked.' % d)
               try:
                   r = json.load(urllib.request.urlopen('https://rdap.org/domain/' + d, timeout=20))
                   ex = [e['eventDate'] for e in r.get('events', []) if e.get('eventAction') == 'expiration']
                   if ex:
                       days = (dt.datetime.fromisoformat(ex[0].replace('Z', '+00:00')) - now).days
-                      if days <= 14: out.append('%s: domain registration ends in %d days' % (d, days))
+                      if days <= 14: out.append('Site: %s\nProblem: The domain registration ends in %d days.\nNext step: Renew it with the domain company.' % (d, days))
                       print('# %s domain %d days' % (d, days))
               except Exception as e:
                   print('# %s domain lookup failed: %s' % (d, str(e)[:60]))
@@ -47,10 +47,10 @@ jobs:
               last = dt.datetime.fromisoformat(open('heartbeat/closeout.txt').read().strip().replace('Z', '+00:00'))
               hours = (now - last).total_seconds() / 3600
               print('# closeout %.1f hours ago' % hours)
-              if hours > 26: out.append("The Mac's midnight save did not run last night (last one %d hours ago). Open the Mac." % hours)
+              if hours > 26: out.append("Mac: The midnight save did not run.\nLast save: %d hours ago\nNext step: Open the Mac and leave it awake tonight." % hours)
           except Exception as e:
-              out.append("Could not tell whether the Mac's midnight save ran (%s)" % str(e)[:60])
-          for line in out: print(line)
+              out.append("Mac: Could not tell whether the midnight save ran.")
+          print('\n\n'.join(out))
           PY
           cat report.txt
           grep -v '^#' report.txt > problems.txt || true
@@ -67,10 +67,16 @@ jobs:
         run: |
           if [ -z "$SID" ] || [ -z "$KEY" ] || [ -z "$TOKEN" ]; then echo "no Twilio secrets"; exit 0; fi
           msg=""
-          if [ -n "$(echo "$PROBLEMS" | sed '/^ *$/d')" ]; then msg="Daily Check
+          if [ -n "$(echo "$PROBLEMS" | sed '/^ *$/d')" ]; then msg="Daily Check: Needs You
 
           $PROBLEMS"; fi
-          if [ "$TEST" = "true" ] && [ -z "$msg" ]; then msg="Daily check test: certificates, domains and last night's Mac save all look fine."; fi
+          if [ "$TEST" = "true" ] && [ -z "$msg" ]; then msg="Daily Check: Test
+
+          Certificates: all fine
+          Domains: all fine
+          Mac midnight save: ran
+
+          You only get this text when something needs you."; fi
           if [ -n "$msg" ]; then
             curl -s -o /tmp/tw.json -w 'twilio %{http_code}\n' -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Messages.json" -u "$KEY:$TOKEN" --data-urlencode "To=$TO" --data-urlencode "From=$FROM" --data-urlencode "Body=$msg"
           fi

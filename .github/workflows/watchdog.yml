@@ -26,19 +26,21 @@ jobs:
           fail=""
           while IFS= read -r line; do
             case "$line" in ''|'#'*) continue;; esac
-            url=$(echo "${line%%|*}" | xargs); want=$(echo "${line#*|}" | xargs)
-            [ "$url" = "$want" ] && want=""
+            name=$(echo "$line" | cut -d'|' -f1 | xargs); url=$(echo "$line" | cut -d'|' -f2 | xargs); want=$(echo "$line" | cut -d'|' -f3- | xargs)
             ok=0; why=""
             for try in 1 2 3; do
               code=$(curl -sL -o /tmp/page.html -m 20 -w '%{http_code}' "$url" || true)
-              if [ "$code" != "200" ]; then why="code $code"
-              elif [ -n "$want" ] && ! python3 -c "import re,html,sys;t=open('/tmp/page.html',errors='ignore').read();t=html.unescape(re.sub(r'<[^>]+>',' ',t));sys.exit(0 if sys.argv[1].lower() in re.sub(r'\\s+',' ',t).lower() else 1)" "$want"; then why="answered but \"$want\" is missing"
+              if [ "$code" != "200" ]; then why="The page did not load (code $code)."
+              elif [ -n "$want" ] && ! python3 -c "import re,html,sys;t=open('/tmp/page.html',errors='ignore').read();t=html.unescape(re.sub(r'<[^>]+>',' ',t));sys.exit(0 if sys.argv[1].lower() in re.sub(r'\\s+',' ',t).lower() else 1)" "$want"; then why="The page loads, but \"$want\" is missing."
               else ok=1; break; fi
               sleep 20
             done
             if [ "$ok" = 1 ]; then echo "$url -> OK"; else echo "$url -> PROBLEM: $why"; fi
             [ "$ok" = 1 ] || fail="$fail
-          - $url ($why)"
+          Page: $name
+          Address: $url
+          Problem: $why
+          "
           done < sites.txt
           { echo "fail<<EOF"; echo "$fail"; echo "EOF"; } >> "$GITHUB_OUTPUT"
       - name: Last run's result
@@ -62,15 +64,25 @@ jobs:
           if [ -z "$SID" ] || [ -z "$KEY" ] || [ -z "$TOKEN" ] || [ -z "$FROM" ] || [ -z "$TO" ]; then echo "Twilio secrets not set: email only."; exit 0; fi
           msg=""
           FAIL=$(echo "$FAIL" | sed "/^ *$/d")
-          if [ -n "$FAIL" ] && [ "$PREV" != "failure" ]; then msg="Site Problem
+          if [ -n "$FAIL" ] && [ "$PREV" != "failure" ]; then msg="Site Watchdog: Problem
 
           $FAIL
+          Checked: 3 times, 20 seconds apart
 
-          Checked 3 times from GitHub. You get one more text when it is back."; fi
-          if [ -z "$FAIL" ] && [ "$PREV" = "failure" ]; then msg="Site Back Up
+          Next step:
+          Open the page on your phone to see it yourself.
+          You get one more text when it is fixed."; fi
+          if [ -z "$FAIL" ] && [ "$PREV" = "failure" ]; then msg="Site Watchdog: Fixed
 
-          Every site is answering again."; fi
-          if [ "$TEST" = "true" ] && [ -z "$msg" ]; then msg="Site watchdog test: texts are working. You will get one text if a site goes down and one when it is back."; fi
+          Every page is loading again.
+          Pages checked: $(grep -vc '^#' sites.txt)"; fi
+          if [ "$TEST" = "true" ] && [ -z "$msg" ]; then msg="Site Watchdog: Test
+
+          Texts are working.
+          Pages checked: $(grep -vc '^#' sites.txt)
+
+          You get one text when a page breaks.
+          You get one more when it is fixed."; fi
           if [ -n "$msg" ]; then
             curl -s -o /tmp/tw.json -w 'twilio %{http_code}\n' -X POST "https://api.twilio.com/2010-04-01/Accounts/$SID/Messages.json" -u "$KEY:$TOKEN" --data-urlencode "To=$TO" --data-urlencode "From=$FROM" --data-urlencode "Body=$msg"
             python3 -c "import json;d=json.load(open('/tmp/tw.json'));print('twilio says:',d.get('code'),d.get('message'),'| status:',d.get('status'))" || true

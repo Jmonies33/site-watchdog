@@ -1,6 +1,6 @@
-# One page per line:  address | text that must be on the page
-# The check fails if the page does not answer OR the text is missing (a broken deploy can still answer).
-https://rivercityautomations.com | Start Your Free Trial
-https://rivercityautomations.com/onboard | pick your plan
-https://thecorridorcard.com | Reserve a category
-https://jandnwindowcleaning.com | 608-1477
+# One page per line:  name | address | text that must be on the page
+# A page is a problem if it does not answer OR its text is missing (a broken deploy can still answer).
+RCA homepage | https://rivercityautomations.com | Start Your Free Trial
+RCA signup form | https://rivercityautomations.com/onboard | pick your plan
+Corridor Card | https://thecorridorcard.com | Reserve a category
+J&N website | https://jandnwindowcleaning.com | 608-1477
